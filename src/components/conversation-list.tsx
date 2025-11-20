@@ -2,7 +2,7 @@
 
 import { useEffect, useState, forwardRef, useImperativeHandle, useCallback } from 'react';
 import { format, isValid, isToday, isYesterday } from 'date-fns';
-import { RefreshCw, Search } from 'lucide-react';
+import { RefreshCw, Search, UserCheck } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAutoPolling } from '@/hooks/use-auto-polling';
 import { Button } from '@/components/ui/button';
@@ -15,6 +15,7 @@ type Conversation = {
   id: string;
   phoneNumber: string;
   status: string;
+  humanTakeover?: boolean;
   lastActiveAt: string;
   phoneNumberId: string;
   metadata?: Record<string, unknown>;
@@ -222,9 +223,16 @@ export const ConversationList = forwardRef<ConversationListRef, Props>(
                 </Avatar>
                 <div className="flex-1 min-w-0 flex justify-between items-start gap-4 overflow-hidden">
                   <div className="flex-1 min-w-0 overflow-hidden">
-                    <p className="font-medium text-[#111b21] truncate">
-                      {conversation.contactName || conversation.phoneNumber}
-                    </p>
+                    <div className="flex items-center gap-1.5">
+                      <p className="font-medium text-[#111b21] truncate">
+                        {conversation.contactName || conversation.phoneNumber}
+                      </p>
+                      {conversation.humanTakeover && (
+                        <span title="Human takeover active" className="flex-shrink-0">
+                          <UserCheck className="h-3.5 w-3.5 text-[#00a884]" />
+                        </span>
+                      )}
+                    </div>
                     {conversation.lastMessage && (
                       <p className="text-sm text-[#667781] truncate mt-0.5">
                         {conversation.lastMessage.direction === 'outbound' && (

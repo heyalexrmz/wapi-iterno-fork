@@ -19,6 +19,7 @@ model Conversation {
   phoneNumber     String    @map("phone_number")
   contactName     String?   @map("contact_name")
   status          String    @default("active")
+  humanTakeover   Boolean   @default(false) @map("human_takeover") // Human-in-the-loop: when true, AI should not respond
   lastActiveAt    DateTime? @map("last_active_at")
   createdAt       DateTime  @default(now()) @map("created_at")
   updatedAt       DateTime  @updatedAt @map("updated_at")
@@ -30,6 +31,7 @@ model Conversation {
   @@index([whatsappNumberId])
   @@index([phoneNumber])
   @@index([status])
+  @@index([humanTakeover])
   @@index([lastActiveAt(sort: Desc)])
   @@map("conversations")
 }

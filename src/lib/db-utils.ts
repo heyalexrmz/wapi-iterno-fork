@@ -1,28 +1,22 @@
-import db, { conversationDb, messageDb } from './db';
+import { prisma } from './prisma';
 
 /**
  * Clean up invalid conversations (those with 'me' or empty phone numbers)
  */
-export function cleanupInvalidConversations() {
+export async function cleanupInvalidConversations() {
   try {
     // Delete conversations where phone_number is 'me' or empty
-    const stmt = db.prepare(`
-      DELETE FROM conversations 
-      WHERE phone_number = 'me' 
-         OR phone_number = '' 
-         OR phone_number IS NULL
-    `);
+    const result = await prisma.conversation.deleteMany({
+      where: {
+        OR: [
+          { phoneNumber: 'me' },
+          { phoneNumber: '' },
+        ],
+      },
+    });
     
-    const result = stmt.run();
-    
-    // Also delete orphaned messages
-    db.prepare(`
-      DELETE FROM messages 
-      WHERE conversation_id NOT IN (SELECT id FROM conversations)
-    `).run();
-    
-    console.log(`Cleaned up ${result.changes} invalid conversation(s)`);
-    return result.changes;
+    console.log(`Cleaned up ${result.count} invalid conversation(s)`);
+    return result.count;
   } catch (error) {
     console.error('Error cleaning up conversations:', error);
     return 0;
@@ -32,12 +26,12 @@ export function cleanupInvalidConversations() {
 /**
  * Get statistics about the database
  */
-export function getDatabaseStats() {
-  const conversationCount = db.prepare('SELECT COUNT(*) as count FROM conversations').get() as { count: number };
-  const messageCount = db.prepare('SELECT COUNT(*) as count FROM messages').get() as { count: number };
+export async function getDatabaseStats() {
+  const conversationCount = await prisma.conversation.count();
+  const messageCount = await prisma.message.count();
   
   return {
-    conversations: conversationCount.count,
-    messages: messageCount.count
+    conversations: conversationCount,
+    messages: messageCount,
   };
 }

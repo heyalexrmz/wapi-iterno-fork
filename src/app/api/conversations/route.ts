@@ -25,6 +25,7 @@ export async function GET(request: Request) {
         id: conversation.id,
         phoneNumber: conversation.phoneNumber,
         status: conversation.status,
+        humanTakeover: conversation.humanTakeover,
         lastActiveAt: conversation.lastActiveAt?.toISOString() || null,
         phoneNumberId: PHONE_ID,
         metadata: conversation.metadata,

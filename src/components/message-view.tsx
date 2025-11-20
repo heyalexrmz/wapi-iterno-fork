@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { format, isValid, isToday, isYesterday, differenceInHours } from 'date-fns';
-import { RefreshCw, Paperclip, Send, X, AlertCircle, MessageSquare, XCircle, ListTree, ArrowLeft } from 'lucide-react';
+import { RefreshCw, Paperclip, Send, X, AlertCircle, MessageSquare, XCircle, ListTree, ArrowLeft, UserCheck, Bot } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { MediaMessage } from '@/components/media-message';
 import { TemplateSelectorDialog } from '@/components/template-selector-dialog';
@@ -132,6 +132,8 @@ export function MessageView({ conversationId, phoneNumber, contactName, onTempla
   const [showTemplateDialog, setShowTemplateDialog] = useState(false);
   const [showInteractiveDialog, setShowInteractiveDialog] = useState(false);
   const [isNearBottom, setIsNearBottom] = useState(true);
+  const [humanTakeover, setHumanTakeover] = useState(false);
+  const [togglingTakeover, setTogglingTakeover] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -140,6 +142,21 @@ export function MessageView({ conversationId, phoneNumber, contactName, onTempla
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
+
+  const fetchConversationData = useCallback(async () => {
+    if (!conversationId) return;
+
+    try {
+      const response = await fetch('/api/conversations');
+      const data = await response.json();
+      const conversation = (data.data || []).find((conv: any) => conv.id === conversationId);
+      if (conversation) {
+        setHumanTakeover(conversation.humanTakeover || false);
+      }
+    } catch (error) {
+      console.error('Error fetching conversation data:', error);
+    }
+  }, [conversationId]);
 
   const fetchMessages = useCallback(async () => {
     if (!conversationId) return;
@@ -212,8 +229,9 @@ export function MessageView({ conversationId, phoneNumber, contactName, onTempla
     if (conversationId) {
       setLoading(true);
       fetchMessages();
+      fetchConversationData();
     }
-  }, [conversationId, fetchMessages]);
+  }, [conversationId, fetchMessages, fetchConversationData]);
 
   useEffect(() => {
     // Only auto-scroll if user is near bottom
@@ -350,6 +368,29 @@ export function MessageView({ conversationId, phoneNumber, contactName, onTempla
     }
   };
 
+  const handleToggleTakeover = async () => {
+    if (!conversationId || togglingTakeover) return;
+
+    setTogglingTakeover(true);
+    try {
+      const response = await fetch(`/api/conversations/${conversationId}/takeover`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ humanTakeover: !humanTakeover }),
+      });
+
+      if (response.ok) {
+        setHumanTakeover(!humanTakeover);
+      }
+    } catch (error) {
+      console.error('Error toggling takeover:', error);
+    } finally {
+      setTogglingTakeover(false);
+    }
+  };
+
   if (!conversationId) {
     return (
       <div className={cn(
@@ -432,15 +473,41 @@ export function MessageView({ conversationId, phoneNumber, contactName, onTempla
               )}
             </div>
           </div>
-          <Button
-            onClick={handleRefresh}
-            disabled={refreshing}
-            variant="ghost"
-            size="icon"
-            className="text-[#667781] hover:bg-[#f0f2f5]"
-          >
-            <RefreshCw className={cn("h-4 w-4", refreshing && "animate-spin")} />
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              onClick={handleToggleTakeover}
+              disabled={togglingTakeover}
+              variant={humanTakeover ? "default" : "ghost"}
+              size="sm"
+              className={cn(
+                humanTakeover 
+                  ? "bg-[#00a884] hover:bg-[#008f6f] text-white" 
+                  : "text-[#667781] hover:bg-[#f0f2f5]"
+              )}
+              title={humanTakeover ? "Human takeover active - AI replies disabled" : "Enable human takeover - disable AI replies"}
+            >
+              {humanTakeover ? (
+                <>
+                  <UserCheck className="h-4 w-4 mr-1" />
+                  <span className="hidden sm:inline">Human</span>
+                </>
+              ) : (
+                <>
+                  <Bot className="h-4 w-4 mr-1" />
+                  <span className="hidden sm:inline">AI</span>
+                </>
+              )}
+            </Button>
+            <Button
+              onClick={handleRefresh}
+              disabled={refreshing}
+              variant="ghost"
+              size="icon"
+              className="text-[#667781] hover:bg-[#f0f2f5]"
+            >
+              <RefreshCw className={cn("h-4 w-4", refreshing && "animate-spin")} />
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -589,7 +656,20 @@ export function MessageView({ conversationId, phoneNumber, contactName, onTempla
       </ScrollArea>
 
       <div className="border-t border-[#d1d7db] bg-[#f0f2f5]">
-        {canSendRegularMessage ? (
+        {!humanTakeover ? (
+          <div className="p-3 max-w-[900px] mx-auto w-full">
+            <div className="bg-[#e3f2fd] border border-[#90caf9] rounded-lg p-4">
+              <div className="flex items-start gap-3">
+                <Bot className="h-5 w-5 text-[#1976d2] flex-shrink-0 mt-0.5" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm text-[#111b21] mb-3">
+                    AI is currently handling this conversation. Click "Human" in the header to take over and send messages manually.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : canSendRegularMessage ? (
           <>
             {selectedFile && (
               <div className="p-3 border-b border-[#d1d7db] bg-white">
