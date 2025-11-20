@@ -14,31 +14,31 @@ export async function GET(request: Request) {
     const parsedLimit = Number.parseInt(searchParams.get('limit') ?? '', 10);
     const limit = Number.isFinite(parsedLimit) && parsedLimit > 0 ? Math.min(parsedLimit, 100) : 50;
 
-    const conversations = conversationDb.list({ status, limit });
+    const conversations = await conversationDb.list({ status, limit });
 
     // Transform conversations to match frontend expectations
-    const transformedData = conversations.map((conversation) => {
-      const lastMessage = conversationDb.getLastMessage(conversation.id);
-      const messagesCount = conversationDb.getMessagesCount(conversation.id);
+    const transformedData = await Promise.all(conversations.map(async (conversation) => {
+      const lastMessage = await conversationDb.getLastMessage(conversation.id);
+      const messagesCount = await conversationDb.getMessagesCount(conversation.id);
 
       return {
         id: conversation.id,
-        phoneNumber: conversation.phone_number,
+        phoneNumber: conversation.phoneNumber,
         status: conversation.status,
-        lastActiveAt: conversation.last_active_at,
+        lastActiveAt: conversation.lastActiveAt?.toISOString() || null,
         phoneNumberId: PHONE_ID,
-        metadata: JSON.parse(conversation.metadata || '{}'),
-        contactName: conversation.contact_name,
+        metadata: conversation.metadata,
+        contactName: conversation.contactName,
         messagesCount,
         lastMessage: lastMessage
           ? {
               content: lastMessage.content || '',
               direction: parseDirection(lastMessage),
-              type: lastMessage.message_type
+              type: lastMessage.messageType
             }
           : undefined
       };
-    });
+    }));
 
     return NextResponse.json({
       data: transformedData,

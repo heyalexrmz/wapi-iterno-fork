@@ -12,7 +12,7 @@ export async function GET(
     const limit = Number.isFinite(parsedLimit) && parsedLimit > 0 ? Math.min(parsedLimit, 100) : 50;
 
     // Verify conversation exists
-    const conversation = conversationDb.get(conversationId);
+    const conversation = await conversationDb.get(conversationId);
     if (!conversation) {
       return NextResponse.json(
         { error: 'Conversation not found' },
@@ -20,35 +20,35 @@ export async function GET(
       );
     }
 
-    const messages = messageDb.list(conversationId, limit);
+    const messages = await messageDb.list(conversationId, limit);
 
     // Transform messages to match frontend expectations
     const transformedData = messages.map((msg) => {
-      const metadata = JSON.parse(msg.metadata || '{}');
-      const hasMedia = Boolean(msg.has_media);
+      const metadata = msg.metadata as Record<string, unknown>;
+      const hasMedia = Boolean(msg.hasMedia);
       
       return {
         id: msg.id,
         direction: msg.direction,
         // For media messages, content is caption. For text, it's the message itself
         content: hasMedia ? '' : (msg.content || ''),
-        createdAt: new Date(msg.timestamp * 1000).toISOString(),
+        createdAt: new Date(Number(msg.timestamp) * 1000).toISOString(),
         status: msg.status,
-        phoneNumber: msg.phone_number,
+        phoneNumber: msg.phoneNumber,
         hasMedia,
-        mediaData: msg.media_url
+        mediaData: msg.mediaUrl
           ? {
-              url: msg.media_url,
-              filename: msg.media_filename,
-              contentType: msg.media_mime_type,
-              byteSize: msg.media_byte_size
+              url: msg.mediaUrl,
+              filename: msg.mediaFilename,
+              contentType: msg.mediaMimeType,
+              byteSize: msg.mediaByteSize
             }
           : undefined,
-        reactionEmoji: msg.reaction_emoji,
-        reactedToMessageId: msg.reacted_to_message_id,
-        filename: msg.media_filename,
-        mimeType: msg.media_mime_type,
-        messageType: msg.message_type,
+        reactionEmoji: msg.reactionEmoji,
+        reactedToMessageId: msg.reactedToMessageId,
+        filename: msg.mediaFilename,
+        mimeType: msg.mediaMimeType,
+        messageType: msg.messageType,
         // Caption is only for media messages
         caption: hasMedia ? msg.content : undefined,
         metadata

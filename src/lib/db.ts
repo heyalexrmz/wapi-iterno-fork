@@ -1,165 +1,131 @@
-import Database from 'better-sqlite3';
-import path from 'path';
+import prisma from './prisma';
+import type { Conversation as PrismaConversation, Message as PrismaMessage } from '@prisma/client';
 
-// Types
-export type Conversation = {
-  id: string;
-  phone_number: string;
-  contact_name: string | null;
-  status: string;
-  last_active_at: string | null;
-  created_at: string;
-  updated_at: string;
-  metadata: string;
+// Get the WhatsApp Number ID from environment
+const WHATSAPP_NUMBER_ID = process.env.WAPISIMO_PHONE_ID || '';
+
+// Types (exported for compatibility)
+export type Conversation = PrismaConversation & {
+  metadata: Record<string, unknown>;
 };
 
-export type Message = {
-  id: string;
-  conversation_id: string;
-  direction: string;
-  content: string | null;
-  phone_number: string;
-  message_type: string;
-  status: string | null;
-  has_media: number;
-  media_url: string | null;
-  media_filename: string | null;
-  media_mime_type: string | null;
-  media_byte_size: number | null;
-  reaction_emoji: string | null;
-  reacted_to_message_id: string | null;
-  timestamp: number;
-  created_at: string;
-  metadata: string;
+export type Message = PrismaMessage & {
+  metadata: Record<string, unknown>;
+  hasMedia: boolean;
+  mediaByteSize: number | null;
+  timestamp: bigint;
 };
-
-// Initialize SQLite database
-const dbPath = path.join(process.cwd(), 'data', 'whatsapp.db');
-const db = new Database(dbPath);
-
-// Enable foreign keys
-db.pragma('foreign_keys = ON');
-
-// Create tables
-db.exec(`
-  CREATE TABLE IF NOT EXISTS conversations (
-    id TEXT PRIMARY KEY,
-    phone_number TEXT NOT NULL,
-    contact_name TEXT,
-    status TEXT DEFAULT 'active',
-    last_active_at TEXT,
-    created_at TEXT DEFAULT (datetime('now')),
-    updated_at TEXT DEFAULT (datetime('now')),
-    metadata TEXT DEFAULT '{}'
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_conversations_phone ON conversations(phone_number);
-  CREATE INDEX IF NOT EXISTS idx_conversations_status ON conversations(status);
-  CREATE INDEX IF NOT EXISTS idx_conversations_last_active ON conversations(last_active_at DESC);
-
-  CREATE TABLE IF NOT EXISTS messages (
-    id TEXT PRIMARY KEY,
-    conversation_id TEXT NOT NULL,
-    direction TEXT NOT NULL,
-    content TEXT,
-    phone_number TEXT NOT NULL,
-    message_type TEXT NOT NULL,
-    status TEXT,
-    has_media INTEGER DEFAULT 0,
-    media_url TEXT,
-    media_filename TEXT,
-    media_mime_type TEXT,
-    media_byte_size INTEGER,
-    reaction_emoji TEXT,
-    reacted_to_message_id TEXT,
-    timestamp INTEGER NOT NULL,
-    created_at TEXT DEFAULT (datetime('now')),
-    metadata TEXT DEFAULT '{}',
-    FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
-  CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp DESC);
-  CREATE INDEX IF NOT EXISTS idx_messages_direction ON messages(direction);
-`);
 
 // Conversation operations
 export const conversationDb = {
-  getOrCreate(phoneNumber: string, contactName?: string): Conversation {
-    const existing = db.prepare('SELECT * FROM conversations WHERE phone_number = ?').get(phoneNumber) as Conversation | undefined;
+  async getOrCreate(phoneNumber: string, contactName?: string): Promise<Conversation> {
+    // Try to find existing conversation
+    const existing = await prisma.conversation.findUnique({
+      where: {
+        whatsappNumberId_phoneNumber: {
+          whatsappNumberId: WHATSAPP_NUMBER_ID,
+          phoneNumber: phoneNumber,
+        },
+      },
+    });
     
     if (existing) {
-      return existing;
+      return existing as Conversation;
     }
 
-    const id = `conv_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    db.prepare(`
-      INSERT INTO conversations (id, phone_number, contact_name, last_active_at)
-      VALUES (?, ?, ?, datetime('now'))
-    `).run(id, phoneNumber, contactName || null);
+    // Create new conversation
+    const newConversation = await prisma.conversation.create({
+      data: {
+        whatsappNumberId: WHATSAPP_NUMBER_ID,
+        phoneNumber: phoneNumber,
+        contactName: contactName || null,
+        lastActiveAt: new Date(),
+      },
+    });
     
-    return db.prepare('SELECT * FROM conversations WHERE id = ?').get(id) as Conversation;
+    return newConversation as Conversation;
   },
 
-  list(filters: { status?: string; limit?: number } = {}): Conversation[] {
+  async list(filters: { status?: string; limit?: number } = {}): Promise<Conversation[]> {
     const { status, limit = 50 } = filters;
-    let query = 'SELECT * FROM conversations';
-    const params: (string | number)[] = [];
-
-    if (status) {
-      query += ' WHERE status = ?';
-      params.push(status);
-    }
-
-    query += ' ORDER BY last_active_at DESC LIMIT ?';
-    params.push(limit);
-
-    return db.prepare(query).all(...params) as Conversation[];
-  },
-
-  get(id: string): Conversation | undefined {
-    return db.prepare('SELECT * FROM conversations WHERE id = ?').get(id) as Conversation | undefined;
-  },
-
-  getByPhone(phoneNumber: string): Conversation | undefined {
-    return db.prepare('SELECT * FROM conversations WHERE phone_number = ?').get(phoneNumber) as Conversation | undefined;
-  },
-
-  update(id: string, data: Partial<{ contact_name: string; status: string; last_active_at: string; metadata: string }>) {
-    const fields: string[] = [];
-    const values: (string | number)[] = [];
-
-    Object.entries(data).forEach(([key, value]) => {
-      fields.push(`${key} = ?`);
-      values.push(value);
+    
+    const conversations = await prisma.conversation.findMany({
+      where: {
+        whatsappNumberId: WHATSAPP_NUMBER_ID,
+        ...(status && { status }),
+      },
+      orderBy: {
+        lastActiveAt: 'desc',
+      },
+      take: limit,
     });
 
-    if (fields.length === 0) return;
-
-    fields.push('updated_at = datetime(\'now\')');
-    values.push(id);
-
-    db.prepare(`UPDATE conversations SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+    return conversations as Conversation[];
   },
 
-  getLastMessage(conversationId: string): Message | undefined {
-    return db.prepare(`
-      SELECT * FROM messages 
-      WHERE conversation_id = ? 
-      ORDER BY timestamp DESC 
-      LIMIT 1
-    `).get(conversationId) as Message | undefined;
+  async get(id: string): Promise<Conversation | null> {
+    const conversation = await prisma.conversation.findFirst({
+      where: {
+        id,
+        whatsappNumberId: WHATSAPP_NUMBER_ID,
+      },
+    });
+    
+    return conversation as Conversation | null;
   },
 
-  getMessagesCount(conversationId: string): number {
-    const result = db.prepare('SELECT COUNT(*) as count FROM messages WHERE conversation_id = ?').get(conversationId) as { count: number };
-    return result.count;
+  async getByPhone(phoneNumber: string): Promise<Conversation | null> {
+    const conversation = await prisma.conversation.findUnique({
+      where: {
+        whatsappNumberId_phoneNumber: {
+          whatsappNumberId: WHATSAPP_NUMBER_ID,
+          phoneNumber: phoneNumber,
+        },
+      },
+    });
+    
+    return conversation as Conversation | null;
+  },
+
+  async update(id: string, data: Partial<{ contactName: string; status: string; lastActiveAt: Date; metadata: Record<string, unknown> }>) {
+    await prisma.conversation.update({
+      where: {
+        id,
+      },
+      data: {
+        ...(data.contactName !== undefined && { contactName: data.contactName }),
+        ...(data.status !== undefined && { status: data.status }),
+        ...(data.lastActiveAt !== undefined && { lastActiveAt: data.lastActiveAt }),
+        ...(data.metadata !== undefined && { metadata: data.metadata as any }),
+      },
+    });
+  },
+
+  async getLastMessage(conversationId: string): Promise<Message | null> {
+    const message = await prisma.message.findFirst({
+      where: {
+        conversationId,
+      },
+      orderBy: {
+        timestamp: 'desc',
+      },
+    });
+    
+    return message as Message | null;
+  },
+
+  async getMessagesCount(conversationId: string): Promise<number> {
+    return await prisma.message.count({
+      where: {
+        conversationId,
+      },
+    });
   }
 };
 
 // Message operations
 export const messageDb = {
-  create(data: {
+  async create(data: {
     id: string;
     conversation_id: string;
     direction: string;
@@ -176,68 +142,75 @@ export const messageDb = {
     reacted_to_message_id?: string;
     timestamp: number;
     metadata?: Record<string, unknown>;
-  }): Message | null {
+  }): Promise<Message | null> {
     try {
-      db.prepare(`
-        INSERT OR IGNORE INTO messages (
-          id, conversation_id, direction, content, phone_number, message_type,
-          status, has_media, media_url, media_filename, media_mime_type, media_byte_size,
-          reaction_emoji, reacted_to_message_id, timestamp, metadata
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-      data.id,
-      data.conversation_id,
-      data.direction,
-      data.content || null,
-      data.phone_number,
-      data.message_type,
-      data.status || null,
-      data.has_media ? 1 : 0,
-      data.media_url || null,
-      data.media_filename || null,
-      data.media_mime_type || null,
-      data.media_byte_size || null,
-      data.reaction_emoji || null,
-      data.reacted_to_message_id || null,
-      data.timestamp,
-      JSON.stringify(data.metadata || {})
-    );
+      const message = await prisma.message.upsert({
+        where: {
+          id: data.id,
+        },
+        update: {},
+        create: {
+          id: data.id,
+          conversationId: data.conversation_id,
+          direction: data.direction,
+          content: data.content || null,
+          phoneNumber: data.phone_number,
+          messageType: data.message_type,
+          status: data.status || null,
+          hasMedia: data.has_media || false,
+          mediaUrl: data.media_url || null,
+          mediaFilename: data.media_filename || null,
+          mediaMimeType: data.media_mime_type || null,
+          mediaByteSize: data.media_byte_size || null,
+          reactionEmoji: data.reaction_emoji || null,
+          reactedToMessageId: data.reacted_to_message_id || null,
+          timestamp: BigInt(data.timestamp),
+          metadata: (data.metadata || {}) as any,
+        },
+      });
 
-      const inserted = db.prepare('SELECT * FROM messages WHERE id = ?').get(data.id) as Message | undefined;
-      return inserted || null;
+      return message as Message;
     } catch (error) {
       console.error('Error inserting message:', error);
       return null;
     }
   },
 
-  list(conversationId: string, limit = 50): Message[] {
-    return db.prepare(`
-      SELECT * FROM messages 
-      WHERE conversation_id = ? 
-      ORDER BY timestamp DESC 
-      LIMIT ?
-    `).all(conversationId, limit) as Message[];
-  },
-
-  get(id: string): Message | undefined {
-    return db.prepare('SELECT * FROM messages WHERE id = ?').get(id) as Message | undefined;
-  },
-
-  update(id: string, data: Partial<{ status: string; metadata: string }>) {
-    const fields: string[] = [];
-    const values: (string | number)[] = [];
-
-    Object.entries(data).forEach(([key, value]) => {
-      fields.push(`${key} = ?`);
-      values.push(value);
+  async list(conversationId: string, limit = 50): Promise<Message[]> {
+    const messages = await prisma.message.findMany({
+      where: {
+        conversationId,
+      },
+      orderBy: {
+        timestamp: 'desc',
+      },
+      take: limit,
     });
 
-    if (fields.length === 0) return;
+    return messages as Message[];
+  },
 
-    values.push(id);
-    db.prepare(`UPDATE messages SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+  async get(id: string): Promise<Message | null> {
+    const message = await prisma.message.findUnique({
+      where: {
+        id,
+      },
+    });
+    
+    return message as Message | null;
+  },
+
+  async update(id: string, data: Partial<{ status: string; metadata: Record<string, unknown> }>) {
+    await prisma.message.update({
+      where: {
+        id,
+      },
+      data: {
+        ...(data.status !== undefined && { status: data.status }),
+        ...(data.metadata !== undefined && { metadata: data.metadata as any }),
+      },
+    });
   }
 };
 
-export default db;
+export default prisma;

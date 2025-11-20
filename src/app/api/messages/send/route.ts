@@ -24,7 +24,7 @@ export async function POST(request: Request) {
     const cleanPhone = to.replace(/[^\d+]/g, '');
     
     // Get or create conversation
-    const conversation = conversationDb.getOrCreate(cleanPhone);
+    const conversation = await conversationDb.getOrCreate(cleanPhone);
 
     // Send media message
     if (file) {

@@ -77,11 +77,11 @@ export async function POST(request: Request) {
       }
 
       // Get or create conversation
-      const conversation = conversationDb.getOrCreate(cleanPhone, contactName);
+      const conversation = await conversationDb.getOrCreate(cleanPhone, contactName);
       
       // Update conversation last active time
-      conversationDb.update(conversation.id, {
-        last_active_at: new Date(timestamp * 1000).toISOString(),
+      await conversationDb.update(conversation.id, {
+        lastActiveAt: new Date(timestamp * 1000),
         status: 'active'
       });
 
@@ -109,7 +109,7 @@ export async function POST(request: Request) {
 
       // Handle reactions
       if (event.subType === 'reaction') {
-        messageDb.create({
+        await messageDb.create({
           id: messageId,
           conversation_id: conversation.id,
           direction,
@@ -129,7 +129,7 @@ export async function POST(request: Request) {
         });
       } else {
         // Handle regular messages
-        messageDb.create({
+        await messageDb.create({
           id: messageId,
           conversation_id: conversation.id,
           direction,

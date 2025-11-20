@@ -7,7 +7,7 @@ import { cleanupMessageDisplay } from '@/lib/cleanup-messages';
  */
 export async function GET() {
   try {
-    const fixedCount = cleanupMessageDisplay();
+    const fixedCount = await cleanupMessageDisplay();
     
     return NextResponse.json({
       success: true,
