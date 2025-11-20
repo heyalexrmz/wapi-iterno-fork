@@ -13,7 +13,6 @@ import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
-import type { MediaData } from '@kapso/whatsapp-cloud-api';
 
 type Message = {
   id: string;
@@ -27,7 +26,7 @@ type Message = {
     url: string;
     contentType?: string;
     filename?: string;
-  } | (MediaData & { url: string });
+  };
   reactionEmoji?: string | null;
   reactedToMessageId?: string | null;
   filename?: string | null;
@@ -171,7 +170,35 @@ export function MessageView({ conversationId, phoneNumber, contactName, onTempla
         return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
       });
 
-      setMessages(sortedMessages);
+      // Preserve optimistic messages (temp IDs) until we have real messages to replace them
+      setMessages(prevMessages => {
+        const optimisticMessages = prevMessages.filter(msg => msg.id.startsWith('temp_'));
+        
+        // If we have optimistic messages, keep them and merge with fetched messages
+        if (optimisticMessages.length > 0) {
+          // Remove duplicates - if a real message matches an optimistic one (by content and close timestamp)
+          const realMessagesMap = new Map(sortedMessages.map((msg: Message) => [msg.id, msg]));
+          const filteredOptimistic = optimisticMessages.filter(optMsg => {
+            // Check if any real message is close in time and has same content
+            const match = sortedMessages.find((realMsg: Message) => {
+              const timeDiff = Math.abs(
+                new Date(realMsg.createdAt).getTime() - new Date(optMsg.createdAt).getTime()
+              );
+              return realMsg.content === optMsg.content && timeDiff < 5000; // Within 5 seconds
+            });
+            return !match; // Keep optimistic if no match found
+          });
+          
+          // Merge and sort
+          const merged = [...sortedMessages, ...filteredOptimistic];
+          return merged.sort((a, b) => 
+            new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+          );
+        }
+        
+        return sortedMessages;
+      });
+      
       previousMessageCountRef.current = sortedMessages.length;
     } catch (error) {
       console.error('Error fetching messages:', error);
@@ -264,26 +291,51 @@ export function MessageView({ conversationId, phoneNumber, contactName, onTempla
     if ((!messageInput.trim() && !selectedFile) || !phoneNumber || sending) return;
 
     setSending(true);
+    
+    // Store message content before clearing
+    const messageText = messageInput.trim();
+    const fileToSend = selectedFile;
+    
     try {
       const formData = new FormData();
       formData.append('to', phoneNumber);
-      if (messageInput.trim()) {
-        formData.append('body', messageInput);
+      if (messageText) {
+        formData.append('body', messageText);
       }
-      if (selectedFile) {
-        formData.append('file', selectedFile);
+      if (fileToSend) {
+        formData.append('file', fileToSend);
       }
+
+      // Optimistically add message to UI immediately
+      const optimisticMessage: Message = {
+        id: `temp_${Date.now()}`,
+        direction: 'outbound',
+        content: messageText,
+        createdAt: new Date().toISOString(),
+        status: 'sending',
+        phoneNumber: phoneNumber,
+        hasMedia: !!fileToSend,
+        messageType: fileToSend ? 'document' : 'text',
+      };
+
+      setMessages(prev => [...prev, optimisticMessage]);
+      setMessageInput('');
+      handleRemoveFile();
 
       await fetch('/api/messages/send', {
         method: 'POST',
         body: formData
       });
 
-      setMessageInput('');
-      handleRemoveFile();
-      await fetchMessages();
+      // Fetch messages after delays to get the real message from webhook
+      // Try multiple times in case webhook is slow
+      setTimeout(() => fetchMessages(), 1000);
+      setTimeout(() => fetchMessages(), 3000);
+      setTimeout(() => fetchMessages(), 5000);
     } catch (error) {
       console.error('Error sending message:', error);
+      // On error, remove the optimistic message
+      setMessages(prev => prev.filter(msg => !msg.id.startsWith('temp_')));
     } finally {
       setSending(false);
     }
@@ -446,7 +498,9 @@ export function MessageView({ conversationId, phoneNumber, contactName, onTempla
                             className="rounded max-w-full h-auto max-h-96"
                           />
                         ) : message.mediaData.contentType?.startsWith('audio/') || message.messageType === 'audio' ? (
-                          <audio src={message.mediaData.url} controls className="w-full" />
+                          <div className="min-w-[280px]">
+                            <audio src={message.mediaData.url} controls className="w-full" />
+                          </div>
                         ) : (
                           <a
                             href={message.mediaData.url}

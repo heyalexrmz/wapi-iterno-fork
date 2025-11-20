@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
-import { whatsappClient, PHONE_NUMBER_ID } from '@/lib/whatsapp-client';
+import { wapisimoClient } from '@/lib/wapisimo-client';
+import { conversationDb, messageDb } from '@/lib/db';
 
 export async function POST(request: Request) {
   try {
@@ -16,53 +17,51 @@ export async function POST(request: Request) {
     }
 
     let result;
+    const timestamp = Math.floor(Date.now() / 1000);
+    const messageId = `msg_${timestamp}_${Math.random().toString(36).substr(2, 9)}`;
+
+    // Clean phone number
+    const cleanPhone = to.replace(/[^\d+]/g, '');
+    
+    // Get or create conversation
+    const conversation = conversationDb.getOrCreate(cleanPhone);
 
     // Send media message
     if (file) {
-      const fileType = file.type.split('/')[0]; // image, video, audio, application
-      const mediaType = fileType === 'application' ? 'document' : fileType;
-
-      // Upload media first
-      const uploadResult = await whatsappClient.media.upload({
-        phoneNumberId: PHONE_NUMBER_ID,
-        type: mediaType as 'image' | 'video' | 'audio' | 'document',
-        file: file,
-        fileName: file.name
+      // Upload file to get public URL
+      const uploadFormData = new FormData();
+      uploadFormData.append('file', file);
+      
+      const uploadResponse = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:4000'}/api/media/upload`, {
+        method: 'POST',
+        body: uploadFormData,
       });
 
-      // Send message with media
-      if (mediaType === 'image') {
-        result = await whatsappClient.messages.sendImage({
-          phoneNumberId: PHONE_NUMBER_ID,
-          to,
-          image: { id: uploadResult.id, caption: body || undefined }
-        });
-      } else if (mediaType === 'video') {
-        result = await whatsappClient.messages.sendVideo({
-          phoneNumberId: PHONE_NUMBER_ID,
-          to,
-          video: { id: uploadResult.id, caption: body || undefined }
-        });
-      } else if (mediaType === 'audio') {
-        result = await whatsappClient.messages.sendAudio({
-          phoneNumberId: PHONE_NUMBER_ID,
-          to,
-          audio: { id: uploadResult.id }
-        });
-      } else {
-        result = await whatsappClient.messages.sendDocument({
-          phoneNumberId: PHONE_NUMBER_ID,
-          to,
-          document: { id: uploadResult.id, caption: body || undefined, filename: file.name }
-        });
+      if (!uploadResponse.ok) {
+        const error = await uploadResponse.json();
+        return NextResponse.json(
+          { error: 'Failed to upload media file', details: error.error },
+          { status: 500 }
+        );
       }
+
+      const uploadResult = await uploadResponse.json();
+      console.log('Upload result from R2:', uploadResult);
+      
+      const { url: mediaUrl, mediaType } = uploadResult;
+      
+      console.log('Extracted values:', { mediaUrl, mediaType, caption: body });
+
+      // Send media message via Wapisimo
+      result = await wapisimoClient.sendMediaMessage(
+        cleanPhone,
+        mediaUrl,
+        mediaType,
+        body || undefined // Optional caption
+      );
     } else if (body) {
-      // Send text message
-      result = await whatsappClient.messages.sendText({
-        phoneNumberId: PHONE_NUMBER_ID,
-        to,
-        body
-      });
+      // Send text message - the webhook will handle database storage
+      result = await wapisimoClient.sendMessage(cleanPhone, body);
     } else {
       return NextResponse.json(
         { error: 'Either body or file is required' },
@@ -70,11 +69,15 @@ export async function POST(request: Request) {
       );
     }
 
-    return NextResponse.json(result);
+    return NextResponse.json({
+      ...result,
+      messageId,
+      conversationId: conversation.id
+    });
   } catch (error) {
     console.error('Error sending message:', error);
     return NextResponse.json(
-      { error: 'Failed to send message' },
+      { error: 'Failed to send message', details: error instanceof Error ? error.message : 'Unknown error' },
       { status: 500 }
     );
   }

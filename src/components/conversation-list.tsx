@@ -230,7 +230,14 @@ export const ConversationList = forwardRef<ConversationListRef, Props>(
                         {conversation.lastMessage.direction === 'outbound' && (
                           <span className="text-[#53bdeb]">✓ </span>
                         )}
-                        {conversation.lastMessage.content}
+                        {conversation.lastMessage.content || 
+                          (conversation.lastMessage.type === 'image' && '📷 Imagen') ||
+                          (conversation.lastMessage.type === 'video' && '🎥 Video') ||
+                          (conversation.lastMessage.type === 'audio' && '🎵 Audio') ||
+                          (conversation.lastMessage.type === 'document' && '📄 Documento') ||
+                          (conversation.lastMessage.type === 'sticker' && '😊 Sticker') ||
+                          'Media'
+                        }
                       </p>
                     )}
                   </div>
